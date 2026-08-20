@@ -1,10 +1,14 @@
-"""Make the ``custom_components`` package importable directly in tests.
+"""Make the integration importable directly in tests.
 
-The integration modules are imported by absolute name
-(``custom_components.musicflow_cast...``); adding the repo root to
-``sys.path`` lets pytest resolve that without involving HA's loader.
+- repo root on sys.path  -> `from helpers import FakeHass`
+- custom_components dir   -> `import musicflow_cast` / `from musicflow_cast...`
 """
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+CC = os.path.join(HERE, "custom_components")
+if CC not in sys.path:
+    sys.path.insert(0, CC)
