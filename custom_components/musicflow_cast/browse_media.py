@@ -131,7 +131,7 @@ async def async_browse_media(
                 media_content_type=MEDIA_TYPE_ALBUM,
                 thumbnail=client.cover_url(album.get("coverArt")),
             ))
-        return _media(title=artist.get("name", "Unknown"), media_class=MediaClass.DIRECTORY, media_content_id=cid, media_content_type=MEDIA_TYPE_ARTIST, children=children)
+        return _media(title=artist.get("name", "Unknown"), media_class=MediaClass.DIRECTORY, media_content_id=cid, media_content_type=MEDIA_TYPE_ARTIST, can_play=True, children=children)
 
     if ctype == MEDIA_TYPE_ALBUMS:
         resp = await client.async_get_album_list()
@@ -188,7 +188,7 @@ async def async_browse_media(
         children = []
         for song in (resp.get("songsByGenre", {}) or {}).get("song", []):
             children.append(_song_node(song, client))
-        return _media(title=genre, media_class=MediaClass.DIRECTORY, media_content_id=cid, media_content_type=MEDIA_TYPE_GENRE, children=children)
+        return _media(title=genre, media_class=MediaClass.DIRECTORY, media_content_id=cid, media_content_type=MEDIA_TYPE_GENRE, can_play=True, children=children)
 
     # 未知 / 单首歌:返回空目录
     return _media(title="MusicFlow", media_class=MediaClass.DIRECTORY, media_content_id=BROWSE_ROOT, media_content_type=BROWSE_ROOT, children=[])
@@ -203,6 +203,8 @@ async def _album_node(client: MusicFlowClient, album_id: str) -> BrowseMediaSour
         media_class=MediaClass.ALBUM,
         media_content_id=f"{MEDIA_TYPE_ALBUM}:{album_id}",
         media_content_type=MEDIA_TYPE_ALBUM,
+        # 容器也可直接播放(resolve_songs 能解析整张专辑),符合 HA 浏览器惯例
+        can_play=True,
         children=children,
         thumbnail=client.cover_url(album.get("coverArt")),
     )
@@ -217,6 +219,8 @@ async def _playlist_node(client: MusicFlowClient, playlist_id: str) -> BrowseMed
         media_class=MediaClass.PLAYLIST,
         media_content_id=f"{MEDIA_TYPE_PLAYLIST}:{playlist_id}",
         media_content_type=MEDIA_TYPE_PLAYLIST,
+        # 歌单可直接播放整单(resolve_songs 支持)
+        can_play=True,
         children=children,
         thumbnail=client.cover_url(playlist.get("coverArt")),
     )
@@ -241,7 +245,9 @@ async def resolve_songs(
 
     专辑/歌单/歌手/风格 → 多首;单首歌 → 自身。
     """
-    if media_type == MEDIA_TYPE_SONG:
+    # "song" 是媒体浏览器内部用的类型;HA 标准 MediaType.TRACK="track",
+    # 外部服务/自动化调用 play_media 时可能传 "track",一并兜底。
+    if media_type in (MEDIA_TYPE_SONG, "track"):
         song = await client.async_get_song(_raw_id(media_id))
         return [_child_to_song(song)] if song else []
 

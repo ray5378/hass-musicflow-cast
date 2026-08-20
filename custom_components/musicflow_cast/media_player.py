@@ -233,6 +233,10 @@ class MusicFlowCastMediaPlayer(MediaPlayerEntity):
     async def _cast_current(self) -> None:
         if not self._queue or self._index >= len(self._queue):
             return
+        # 投屏开始即刷新防抖窗口:覆盖 Stop→SetURI→Play 全过程。
+        # 否则投屏进行中(尤其 Stop 后设备处于 STOPPED 的空窗)若轮询恰好
+        # 触发,会拿旧的 _last_cast_at 误判"自然结束"而提前 advance(跳歌/双投)。
+        self._last_cast_at = self.hass.loop.time()
         song = self._queue[self._index]
         device = self._device
         session = self.coordinator.session
@@ -252,7 +256,6 @@ class MusicFlowCastMediaPlayer(MediaPlayerEntity):
             _LOGGER.warning("DLNA %s SetAVTransportURI 失败", device.udn)
             return
         await device.async_play(session)
-        self._last_cast_at = self.hass.loop.time()
         self.async_write_ha_state()
 
     async def _advance(self, step: int = 1) -> None:
