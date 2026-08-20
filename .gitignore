@@ -15,3 +15,6 @@ __pycache__/
 # HA local test
 home-assistant.log
 custom_components/musicflow_cast/__pycache__/
+
+# HACS validation log (transient)
+hacs.log
