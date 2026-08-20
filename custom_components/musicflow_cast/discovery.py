@@ -145,32 +145,50 @@ async def discover_renderers(session: aiohttp.ClientSession, timeout: float = 4.
     """主动发一轮 M-SEARCH,收集局域网内 MediaRenderer。
 
     返回发现的设备列表(按 UDN 去重)。同一台设备可能回多个响应,调用方需去重。
+    失败(网络受限 / 无广播权限 / 容器隔离)时返回空列表并记 warning —— 发现失败
+    只是"暂时没设备",绝不能冒泡让集成 setup 失败。
     """
     loop = asyncio.get_running_loop()
     devices: dict[str, DlnaDeviceInfo] = {}
     locations_seen: set[str] = set()
 
-    # 用单个 UDP socket 既发 M-SEARCH 又收响应(绑定到通配地址 + 随机端口)
-    sock = await loop.create_datagram_endpoint(
-        asyncio.DatagramProtocol,
-        family=__import__("socket").AF_INET,
-        allow_broadcast=True,
-    )
-    transport = sock[0]
-    protocol = sock[1]
-
+    transport = None
     try:
-        transport.sendto(M_SEARCH, SSDP_TARGET)
-        sock = transport.get_extra_info("socket")
-        if sock is None:
-            return list(devices.values())
+        # 用单个 UDP socket 既发 M-SEARCH 又收响应(绑定到通配地址 + 随机端口)。
+        # 多播/广播在容器、隔离网络下可能抛 OSError/PermissionError,必须容错。
+        sock = await loop.create_datagram_endpoint(
+            asyncio.DatagramProtocol,
+            family=__import__("socket").AF_INET,
+            allow_broadcast=True,
+        )
+        transport = sock[0]
+
+        raw = transport.get_extra_info("socket")
+        if raw is not None:
+            # 多播 TTL:默认 TTL 在部分系统为 0,设备收不到 M-SEARCH
+            try:
+                raw.setsockopt(
+                    __import__("socket").IPPROTO_IP,
+                    __import__("socket").IP_MULTICAST_TTL,
+                    2,
+                )
+            except OSError:
+                pass
+
+        try:
+            transport.sendto(M_SEARCH, SSDP_TARGET)
+        except OSError as err:
+            _LOGGER.warning("SSDP M-SEARCH 发送失败(网络受限?): %s", err)
+            return []
+        if raw is None:
+            return []
 
         # 接收响应:轮询 socket 直到超时(同一设备可能回多个响应,去重在后面做)
         end = loop.time() + timeout
         while loop.time() < end:
             try:
                 data, _addr = await asyncio.wait_for(
-                    loop.sock_recv(sock, 4096),
+                    loop.sock_recv(raw, 4096),
                     timeout=max(0.1, end - loop.time()),
                 )
             except asyncio.TimeoutError:
@@ -187,11 +205,16 @@ async def discover_renderers(session: aiohttp.ClientSession, timeout: float = 4.
                     if location and location not in locations_seen:
                         locations_seen.add(location)
                     break
+    except Exception as err:  # noqa: BLE001
+        # create_datagram_endpoint 等失败:无 SO_BROADCAST 权限 / 容器网络限制
+        _LOGGER.warning("SSDP 发现 socket 创建失败(网络/容器限制?): %s", err)
+        return []
     finally:
-        try:
-            transport.close()
-        except Exception:  # noqa: BLE001
-            pass
+        if transport is not None:
+            try:
+                transport.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     # 并发拉取每个 location 的 description.xml
     results = await asyncio.gather(

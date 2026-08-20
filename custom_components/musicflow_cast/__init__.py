@@ -14,9 +14,10 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 
-from .api import MusicFlowClient
+from .api import MusicFlowAuthError, MusicFlowClient, MusicFlowError
 from .const import CONF_PASSWORD, CONF_URL, CONF_USERNAME, CONF_VERIFY_SSL, DOMAIN
 from .coordinator import MusicFlowCastCoordinator
 
@@ -29,10 +30,12 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """建立 client + coordinator,首轮发现后加载 media_player 平台。"""
+    """建立 client + coordinator;首轮发现不阻塞也不致命。"""
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
     verify_ssl = entry.data.get(CONF_VERIFY_SSL, True)
+    if not verify_ssl:
+        _LOGGER.warning("SSL 证书验证已关闭(verify_ssl=false),仅建议在自签名/测试环境使用")
     session = async_get_clientsession(hass, verify_ssl=verify_ssl)
     client = MusicFlowClient(
         session,
@@ -41,10 +44,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.data[CONF_PASSWORD],
         verify_ssl,
     )
-    coordinator = MusicFlowCastCoordinator(session, client)
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-    # 首轮发现(可能抛网络异常,交由 HA 重试 / 重认证)
+    # 测试前检查(Quality Scale test-before-setup):重启后 MusicFlow 可能离线
+    # (ConfigEntryNotReady → HA 自动重试)或凭据失效(ConfigEntryAuthFailed → reauth)。
+    try:
+        await client.async_verify()
+    except MusicFlowAuthError as err:
+        raise ConfigEntryAuthFailed(f"MusicFlow 凭据无效: {err}") from err
+    except MusicFlowError as err:
+        raise ConfigEntryNotReady(f"无法连接 MusicFlow: {err}") from err
+
+    coordinator = MusicFlowCastCoordinator(hass, session, client)
+    entry.runtime_data = coordinator
+
+    # 首轮发现:失败只记日志,不阻止 setup(媒体源已就绪,设备稍后被轮询发现)。
     await coordinator.async_start()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -54,10 +67,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        coordinator: MusicFlowCastCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator: MusicFlowCastCoordinator = entry.runtime_data
         await coordinator.async_shutdown()
-        if not hass.data[DOMAIN]:
-            hass.data.pop(DOMAIN)
     return unload_ok
 
 

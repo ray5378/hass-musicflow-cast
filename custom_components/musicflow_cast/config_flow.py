@@ -17,7 +17,7 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import MusicFlowAuthError, MusicFlowClient, MusicFlowError
+from .api import MusicFlowAuthError, MusicFlowClient, MusicFlowError, MusicFlowSSLError
 from .const import (
     CONF_PASSWORD,
     CONF_URL,
@@ -59,8 +59,11 @@ class MusicFlowCastConfigFlow(ConfigFlow, domain=DOMAIN):
             info = await client.async_verify()
         except MusicFlowAuthError:
             return {"base": "invalid_auth"}, {}
+        except MusicFlowSSLError as err:
+            _LOGGER.error("MusicFlow SSL 证书验证失败: %s", err)
+            return {"base": "ssl_error"}, {}
         except MusicFlowError as err:
-            _LOGGER.debug("MusicFlow 连通性校验失败: %s", err)
+            _LOGGER.error("MusicFlow 连通性校验失败: %s", err)
             return {"base": "cannot_connect"}, {}
         except Exception:  # noqa: BLE001
             _LOGGER.exception("MusicFlow 连通性校验出现未预期异常")
@@ -88,6 +91,8 @@ class MusicFlowCastConfigFlow(ConfigFlow, domain=DOMAIN):
                 user_default = username
                 password = user_input[CONF_PASSWORD]
                 verify_ssl = user_input.get(CONF_VERIFY_SSL, True)
+                if not verify_ssl:
+                    _LOGGER.warning("SSL 验证已关闭(仅建议自签名/测试环境)")
                 errors, info = await self._async_validate(url, username, password, verify_ssl)
                 if not errors:
                     await self.async_set_unique_id(url, raise_on_progress=False)

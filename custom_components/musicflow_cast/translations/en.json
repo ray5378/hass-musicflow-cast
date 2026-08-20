@@ -23,6 +23,7 @@
     "error": {
       "invalid_auth": "Invalid username or password",
       "cannot_connect": "Cannot connect to MusicFlow, check the URL and network",
+      "ssl_error": "SSL certificate verification failed. If MusicFlow uses a self-signed certificate, uncheck 'Verify SSL certificate'",
       "unknown": "An unknown error occurred"
     },
     "abort": {

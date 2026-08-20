@@ -23,6 +23,7 @@
     "error": {
       "invalid_auth": "用户名或密码错误",
       "cannot_connect": "无法连接 MusicFlow,请检查地址与网络",
+      "ssl_error": "SSL 证书验证失败。若 MusicFlow 使用自签名证书,请勾选关闭 SSL 验证",
       "unknown": "发生未知错误"
     },
     "abort": {

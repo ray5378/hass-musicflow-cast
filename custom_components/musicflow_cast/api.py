@@ -41,6 +41,10 @@ class MusicFlowAuthError(MusicFlowError):
     """用户名/密码无效。"""
 
 
+class MusicFlowSSLError(MusicFlowError):
+    """SSL 证书验证失败(自签名/不被信任的证书)。"""
+
+
 def _subsonic_token(password: str, salt: str) -> str:
     """OpenSubsonic 标准 token = md5(plaintext_password + clientSalt)。"""
     return hashlib.md5((password + salt).encode("utf-8")).hexdigest()
@@ -77,8 +81,9 @@ class MusicFlowClient:
         }
 
     def _request_kwargs(self) -> dict[str, Any]:
+        # SSL 验证由 async_get_clientsession(hass, verify_ssl=...) 的 connector 统一
+        # 管理,不要在单请求上再覆盖 ssl,避免与 session 配置冲突。
         return {
-            "ssl": False if not self._verify_ssl else None,
             "timeout": aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
         }
 
@@ -104,6 +109,9 @@ class MusicFlowClient:
                 else:
                     # 流/封面:调用方自行处理响应体
                     return {}
+        except aiohttp.ClientSSLError as err:
+            # 注意:ClientSSLError 是 ClientConnectorError 的子类,必须在 ClientError 之前捕获
+            raise MusicFlowSSLError(f"{view} SSL 证书验证失败: {err}") from err
         except (TimeoutError, asyncio.TimeoutError) as err:
             raise MusicFlowError(f"{view} 超时") from err
         except aiohttp.ClientError as err:

@@ -31,9 +31,11 @@ class MusicFlowCastCoordinator:
 
     def __init__(
         self,
+        hass: Any,  # HomeAssistant
         session: aiohttp.ClientSession,
         client: Any,  # MusicFlowClient
     ) -> None:
+        self.hass = hass
         self.session = session
         self.client = client
         self.devices: dict[str, DlnaDevice] = {}
@@ -46,9 +48,13 @@ class MusicFlowCastCoordinator:
         if self._started:
             return
         self._started = True
-        self._discovery_task = asyncio.create_task(self._discovery_loop())
-        # 首轮发现先跑一次,让实体能尽快出现
-        await self.async_discover()
+        self._discovery_task = self.hass.async_create_task(self._discovery_loop())
+        # 首轮发现先跑一次,让实体能尽快出现;失败不致命(如网络/容器限制),
+        # 后台发现循环会持续重试,绝不向 setup 冒泡。
+        try:
+            await self.async_discover()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("首轮 DLNA 发现失败(后台将自动重试)")
 
     async def async_shutdown(self) -> None:
         if self._discovery_task is not None:
@@ -61,9 +67,12 @@ class MusicFlowCastCoordinator:
         self._started = False
 
     def async_on_devices_changed(self, cb: DeviceChangedCallback) -> None:
+        """注册设备变化回调。回调必须是同步的(在事件循环内直接调用)。"""
         self._listeners.append(cb)
 
     def _notify(self) -> None:
+        # 注意:listeners 都是同步回调(media_player 的 reconcile 已改同步),
+        # 直接调用即可 —— 若注册 async 回调会留下 never-awaited coroutine。
         for cb in self._listeners:
             cb()
 

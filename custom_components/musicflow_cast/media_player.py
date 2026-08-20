@@ -23,7 +23,7 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .browse_media import async_browse_media, resolve_songs
 from .const import (
@@ -55,24 +55,26 @@ def _mime_for(content_type: str | None, suffix: str | None) -> str:
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    coordinator: MusicFlowCastCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: MusicFlowCastCoordinator = entry.runtime_data
     manager = _DeviceManager(hass, coordinator, async_add_entities)
+    # reconcile 是同步回调(协调器 _notify 在事件循环内直接调用,不 await)
     coordinator.async_on_devices_changed(manager.reconcile)
-    await manager.reconcile()
+    manager.reconcile()
 
 
 class _DeviceManager:
     """按协调器设备注册表增删 media_player 实体。"""
 
-    def __init__(self, hass: HomeAssistant, coordinator: MusicFlowCastCoordinator, async_add_entities: AddEntitiesCallback) -> None:
+    def __init__(self, hass: HomeAssistant, coordinator: MusicFlowCastCoordinator, async_add_entities: AddConfigEntryEntitiesCallback) -> None:
         self.hass = hass
         self.coordinator = coordinator
         self.async_add_entities = async_add_entities
         self._entities: dict[str, MusicFlowCastMediaPlayer] = {}
 
-    async def reconcile(self) -> None:
+    def reconcile(self) -> None:
+        """设备注册表变化时同步增删实体(同步方法,事件循环内直接调用)。"""
         # 新增
         for udn, device in self.coordinator.devices.items():
             if udn not in self._entities:
