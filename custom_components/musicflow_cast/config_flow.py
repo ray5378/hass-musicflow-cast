@@ -70,13 +70,13 @@ class MusicFlowCastConfigFlow(ConfigFlow, domain=DOMAIN):
             return {"base": "unknown"}, {}
         return {}, info
 
-    def _schema(self, url_default: str = "", user_default: str = "") -> vol.Schema:
+    def _schema(self, url_default: str = "", user_default: str = "", verify_default: bool = True) -> vol.Schema:
         return vol.Schema(
             {
                 vol.Required(CONF_URL, default=url_default): str,
                 vol.Required(CONF_USERNAME, default=user_default): str,
                 vol.Required(CONF_PASSWORD): str,
-                vol.Optional(CONF_VERIFY_SSL, default=True): bool,
+                vol.Optional(CONF_VERIFY_SSL, default=verify_default): bool,
             }
         )
 
@@ -120,6 +120,47 @@ class MusicFlowCastConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         return await self.async_step_reauth_confirm()
+
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """重新配置(改 URL/凭据/SSL),HA 2024.2+ 标准入口,免删条目。"""
+        errors: dict[str, str] = {}
+        try:
+            entry = self._get_reconfigure_entry()
+        except AbortFlow:
+            raise
+        url = entry.data[CONF_URL]
+        username = entry.data[CONF_USERNAME]
+        verify_ssl = entry.data.get(CONF_VERIFY_SSL, True)
+        if user_input is not None:
+            try:
+                url = _normalize_url(user_input[CONF_URL])
+                username = user_input[CONF_USERNAME].strip()
+                password = user_input[CONF_PASSWORD]
+                verify_ssl = user_input.get(CONF_VERIFY_SSL, True)
+                if not verify_ssl:
+                    _LOGGER.warning("SSL 验证已关闭(仅建议自签名/测试环境)")
+                errors, _info = await self._async_validate(url, username, password, verify_ssl)
+                if not errors:
+                    return self.async_update_reload_and_abort(
+                        entry,
+                        data_updates={
+                            CONF_URL: url,
+                            CONF_USERNAME: username,
+                            CONF_PASSWORD: password,
+                            CONF_VERIFY_SSL: verify_ssl,
+                        },
+                    )
+            except AbortFlow:
+                raise
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("配置流 reconfigure 步骤出现未预期异常")
+                errors = {"base": "unknown"}
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self._schema(url, username, verify_ssl),
+            errors=errors,
+        )
 
     async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}

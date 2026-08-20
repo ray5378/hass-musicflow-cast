@@ -18,6 +18,16 @@
           "username": "Username",
           "password": "Password"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure MusicFlow Cast",
+        "description": "Update the MusicFlow server URL or credentials.",
+        "data": {
+          "url": "MusicFlow URL (public HTTPS behind a reverse proxy)",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL certificate"
+        }
       }
     },
     "error": {

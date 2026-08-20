@@ -18,6 +18,16 @@
           "username": "用户名",
           "password": "密码"
         }
+      },
+      "reconfigure": {
+        "title": "重新配置 MusicFlow Cast",
+        "description": "更新 MusicFlow 服务器地址或凭据。",
+        "data": {
+          "url": "MusicFlow 地址(反代后的公网 HTTPS)",
+          "username": "用户名",
+          "password": "密码",
+          "verify_ssl": "验证 SSL 证书"
+        }
       }
     },
     "error": {
