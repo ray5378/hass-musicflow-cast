@@ -35,6 +35,15 @@ from .const import (
 from .api import MusicFlowClient
 
 
+def _raw_id(media_id: str) -> str:
+    """media_content_id 形如 '<type>:<id>',剥离类型前缀取原始 id;无前缀则原样返回。
+
+    resolve_songs 收到的 media_id 是带前缀的格式(与媒体浏览器构造时一致),
+    必须剥掉前缀才能传给后端 OpenSubsonic 接口(否则 id=album:123 查不到)。
+    """
+    return media_id.split(":", 1)[1] if ":" in media_id else media_id
+
+
 def _child_to_song(child: dict[str, Any]) -> dict[str, Any]:
     """把 OpenSubsonic Child/ID3 归一化成内部 song dict。"""
     return {
@@ -233,20 +242,20 @@ async def resolve_songs(
     专辑/歌单/歌手/风格 → 多首;单首歌 → 自身。
     """
     if media_type == MEDIA_TYPE_SONG:
-        song = await client.async_get_song(media_id)
+        song = await client.async_get_song(_raw_id(media_id))
         return [_child_to_song(song)] if song else []
 
     if media_type == MEDIA_TYPE_ALBUM:
-        resp = await client.async_get_album(media_id)
+        resp = await client.async_get_album(_raw_id(media_id))
         return [_child_to_song(s) for s in resp.get("album", {}).get("song", [])]
 
     if media_type == MEDIA_TYPE_PLAYLIST:
-        resp = await client.async_get_playlist(media_id)
+        resp = await client.async_get_playlist(_raw_id(media_id))
         return [_child_to_song(s) for s in resp.get("playlist", {}).get("entry", [])]
 
     if media_type == MEDIA_TYPE_ARTIST:
         # 艺术家 → 所有专辑的歌曲(可能很多,但 MVP 直接铺平)
-        resp = await client.async_get_artist(media_id)
+        resp = await client.async_get_artist(_raw_id(media_id))
         songs: list[dict[str, Any]] = []
         for album in resp.get("artist", {}).get("album", []):
             ar = await client.async_get_album(album["id"])
@@ -254,7 +263,7 @@ async def resolve_songs(
         return songs
 
     if media_type == MEDIA_TYPE_GENRE:
-        resp = await client.async_get_songs_by_genre(media_id)
+        resp = await client.async_get_songs_by_genre(_raw_id(media_id))
         return [_child_to_song(s) for s in resp.get("songsByGenre", {}).get("song", [])]
 
     return []

@@ -28,7 +28,6 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .browse_media import async_browse_media, resolve_songs
 from .const import (
     DOMAIN,
-    MEDIA_TYPE_SONG,
     POLL_INTERVAL,
 )
 from .coordinator import MusicFlowCastCoordinator
@@ -195,20 +194,22 @@ class MusicFlowCastMediaPlayer(MediaPlayerEntity):
             await self._device.async_update(self.coordinator.session)
         except Exception:  # noqa: BLE001
             _LOGGER.debug("轮询设备 %s 状态失败", self._device.udn)
-        # 自动下一首:正在播放且自然结束(STOPPED 且距上次投屏 > 3s 防抖)
-        if self._playing and self._device.state.transport_state == "STOPPED":
-            if (self.hass.loop.time() - self._last_cast_at) > 3:
-                await self._advance()
+        # 自动下一首:正在播放且自然结束(STOPPED 且距上次成功投屏 > 3s 防抖)。
+        # 必须 _last_cast_at > 0:若某次 SetAVTransportURI 失败(未真正投屏),
+        # 不该跳过该曲直接 advance。
+        if (
+            self._playing
+            and self._device.state.transport_state == "STOPPED"
+            and self._last_cast_at > 0
+            and (self.hass.loop.time() - self._last_cast_at) > 3
+        ):
+            await self._advance()
         self.async_write_ha_state()
 
     # ==================== 播放控制 ====================
     async def async_play_media(self, media_type: str, media_id: str, **kwargs: Any) -> None:
-        client = self._client
-        if media_type == MEDIA_TYPE_SONG:
-            songs = await client.async_get_song(media_id)
-            songs = [songs] if songs else []
-        else:
-            songs = await resolve_songs(client, media_type, media_id)
+        # resolve_songs 内部会剥离 media_id 的 '<type>:' 前缀,统一从这里拿歌。
+        songs = await resolve_songs(self._client, media_type, media_id)
         if not songs:
             _LOGGER.warning("无法解析播放目标 %s:%s", media_type, media_id)
             return
@@ -221,8 +222,8 @@ class MusicFlowCastMediaPlayer(MediaPlayerEntity):
                 "artist": s.get("artist") or "",
                 "album": s.get("album") or "",
                 "duration": int(s.get("duration") or 0),
-                "stream_url": client.stream_url(str(s.get("id"))),
-                "cover_url": client.cover_url(s.get("cover_art")),
+                "stream_url": self._client.stream_url(str(s.get("id"))),
+                "cover_url": self._client.cover_url(s.get("cover_art")),
                 "mime": _mime_for(s.get("content_type"), s.get("suffix")),
             })
         self._index = 0

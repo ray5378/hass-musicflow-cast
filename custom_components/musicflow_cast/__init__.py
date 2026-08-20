@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 
-from .api import MusicFlowAuthError, MusicFlowClient, MusicFlowError
+from .api import MusicFlowAuthError, MusicFlowClient, MusicFlowError, MusicFlowSSLError
 from .const import CONF_PASSWORD, CONF_URL, CONF_USERNAME, CONF_VERIFY_SSL, DOMAIN
 from .coordinator import MusicFlowCastCoordinator
 
@@ -51,6 +51,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await client.async_verify()
     except MusicFlowAuthError as err:
         raise ConfigEntryAuthFailed(f"MusicFlow 凭据无效: {err}") from err
+    except MusicFlowSSLError as err:
+        _LOGGER.error("MusicFlow SSL 证书验证失败: %s", err)
+        raise ConfigEntryNotReady(
+            "MusicFlow SSL 证书验证失败,请在集成配置中关闭「验证 SSL 证书」后重试"
+        ) from err
     except MusicFlowError as err:
         raise ConfigEntryNotReady(f"无法连接 MusicFlow: {err}") from err
 
