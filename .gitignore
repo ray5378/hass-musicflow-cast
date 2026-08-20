@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# HA local test
+home-assistant.log
+custom_components/musicflow_cast/__pycache__/

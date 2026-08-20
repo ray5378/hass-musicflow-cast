@@ -1,0 +1,13 @@
+{
+  "domain": "musicflow_cast",
+  "name": "MusicFlow Cast",
+  "codeowners": ["@ray5378"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/ray5378/hass-musicflow-cast",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/ray5378/hass-musicflow-cast/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

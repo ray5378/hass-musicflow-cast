@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MusicFlow Cast",
+        "description": "把 HA 当成客户端节点:在本机局域网发现 DLNA 设备,从远程 MusicFlow(OpenSubsonic)投屏播放。",
+        "data": {
+          "url": "MusicFlow 地址(反代后的公网 HTTPS)",
+          "username": "用户名",
+          "password": "密码",
+          "verify_ssl": "验证 SSL 证书"
+        }
+      },
+      "reauth_confirm": {
+        "title": "重新验证 MusicFlow",
+        "description": "凭据已失效,请重新填写。",
+        "data": {
+          "username": "用户名",
+          "password": "密码"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "用户名或密码错误",
+      "cannot_connect": "无法连接 MusicFlow,请检查地址与网络",
+      "unknown": "发生未知错误"
+    },
+    "abort": {
+      "already_configured": "该 MusicFlow 地址已配置"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MusicFlow Cast",
+        "description": "Use HA as a client node: discover DLNA devices on your local network and cast from a remote MusicFlow (OpenSubsonic) server.",
+        "data": {
+          "url": "MusicFlow URL (public HTTPS behind a reverse proxy)",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate MusicFlow",
+        "description": "Your credentials expired, please re-enter them.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password",
+      "cannot_connect": "Cannot connect to MusicFlow, check the URL and network",
+      "unknown": "An unknown error occurred"
+    },
+    "abort": {
+      "already_configured": "This MusicFlow URL is already configured"
+    }
+  }
+}
