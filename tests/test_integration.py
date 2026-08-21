@@ -368,6 +368,56 @@ async def test_play_album_to_device(mock_server: str, patched_session) -> None:
         await close_hass(hass)
 
 
+# --------------------------------------------------------------------------
+# Entity creation: discovered DLNA device -> media_player entity
+# --------------------------------------------------------------------------
+async def test_device_discovery_creates_entity(mock_server: str, patched_session) -> None:
+    """When the coordinator discovers a DLNA device, a media_player entity must be
+    created via reconcile -> async_add_entities. This is the exact "connect but no
+    entity appears" path the user reported -- if this test fails the bug is in the
+    integration; if it passes, the absence of entities means discovery found nothing
+    (network/container), not a code defect."""
+    from musicflow_cast import async_setup_entry
+    from musicflow_cast.dlna import DlnaDevice, DlnaDeviceInfo
+    from musicflow_cast.media_player import async_setup_entry as mp_setup
+
+    hass = FakeHass()
+    try:
+        entry = _make_entry(mock_server)
+        await async_setup_entry(hass, entry)  # type: ignore[arg-type]
+        coordinator = entry.runtime_data
+        assert coordinator.devices == {}, "no devices should be discovered in this sim yet"
+
+        added: list[Any] = []
+        # register the platform (registers manager.reconcile as the devices-changed callback)
+        await mp_setup(hass, entry, lambda ents: added.extend(ents))
+
+        # simulate the coordinator discovering a renderer
+        info = DlnaDeviceInfo(
+            udn="uuid:test",
+            name="TestRenderer",
+            location=mock_server,
+            av_transport_url=f"{mock_server}/control",
+            rendering_control_url=f"{mock_server}/control",
+        )
+        coordinator.devices["uuid:test"] = DlnaDevice(info=info)
+        coordinator._notify()  # devices-changed -> manager.reconcile() -> async_add_entities
+
+        assert len(added) == 1, f"expected 1 entity to be added, got {len(added)}: {added}"
+        entity = added[0]
+        assert entity.unique_id == "uuid:test"
+        assert entity.name == "TestRenderer"
+
+        # a second reconcile must NOT duplicate the entity
+        coordinator._notify()
+        assert len(added) == 1, f"entity duplicated on re-notify: {added}"
+    finally:
+        if entry.runtime_data is not None:
+            await entry.runtime_data.async_shutdown()
+        await close_hass(hass)
+
+
+
 async def test_dlna_update_runs(mock_server: str) -> None:
     """Device status polling must run without error and mark the device available."""
     import aiohttp
