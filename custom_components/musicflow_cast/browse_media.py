@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.media_player.browse_media import (
-    BrowseMediaSource,
+    BrowseMedia,
     MediaClass,
     MediaType,
 )
@@ -66,10 +66,10 @@ def _media(
     media_content_type: str,
     can_play: bool = False,
     can_expand: bool = True,
-    children: list[BrowseMediaSource] | None = None,
+    children: list[BrowseMedia] | None = None,
     thumbnail: str | None = None,
-) -> BrowseMediaSource:
-    return BrowseMediaSource(
+) -> BrowseMedia:
+    return BrowseMedia(
         title=title,
         media_class=media_class,
         media_content_id=media_content_id,
@@ -85,8 +85,8 @@ async def async_browse_media(
     client: MusicFlowClient,
     media_content_type: str | None,
     media_content_id: str | None,
-) -> BrowseMediaSource:
-    """构造当前层级的 BrowseMediaSource。"""
+) -> BrowseMedia:
+    """构造当前层级的 BrowseMedia。"""
     ctype = media_content_type or BROWSE_ROOT
     cid = media_content_id or BROWSE_ROOT
 
@@ -194,7 +194,7 @@ async def async_browse_media(
     return _media(title="MusicFlow", media_class=MediaClass.DIRECTORY, media_content_id=BROWSE_ROOT, media_content_type=BROWSE_ROOT, children=[])
 
 
-async def _album_node(client: MusicFlowClient, album_id: str) -> BrowseMediaSource:
+async def _album_node(client: MusicFlowClient, album_id: str) -> BrowseMedia:
     resp = await client.async_get_album(album_id)
     album = resp.get("album", {})
     children = [_song_node(s, client) for s in album.get("song", [])]
@@ -210,7 +210,7 @@ async def _album_node(client: MusicFlowClient, album_id: str) -> BrowseMediaSour
     )
 
 
-async def _playlist_node(client: MusicFlowClient, playlist_id: str) -> BrowseMediaSource:
+async def _playlist_node(client: MusicFlowClient, playlist_id: str) -> BrowseMedia:
     resp = await client.async_get_playlist(playlist_id)
     playlist = resp.get("playlist", {})
     children = [_song_node(s, client) for s in playlist.get("entry", [])]
@@ -226,7 +226,7 @@ async def _playlist_node(client: MusicFlowClient, playlist_id: str) -> BrowseMed
     )
 
 
-def _song_node(song: dict[str, Any], client: MusicFlowClient) -> BrowseMediaSource:
+def _song_node(song: dict[str, Any], client: MusicFlowClient) -> BrowseMedia:
     return _media(
         title=song.get("title", "Unknown"),
         media_class=MediaClass.TRACK,

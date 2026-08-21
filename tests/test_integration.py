@@ -109,10 +109,30 @@ async def mock_server():
     await runner.cleanup()
 
 
+@pytest.fixture
+async def patched_session(monkeypatch):
+    """Return a real aiohttp session for the integration's `async_get_clientsession`
+    calls, bypassing HA's session factory (which reads hass.data['network'] that a
+    FakeHass cannot provide). Keeps tests focused on integration logic."""
+    session = aiohttp.ClientSession()
+
+    def fake(hass, verify_ssl=True):
+        return session
+
+    # __init__.async_setup_entry imports the function INSIDE the function body
+    monkeypatch.setattr("homeassistant.helpers.aiohttp_client.async_get_clientsession", fake)
+    # config_flow imports it at module level
+    import musicflow_cast.config_flow as cf
+
+    monkeypatch.setattr(cf, "async_get_clientsession", fake)
+    yield session
+    await session.close()
+
+
 # --------------------------------------------------------------------------
 # Config flow
 # --------------------------------------------------------------------------
-async def test_config_flow_success_builds_entry(mock_server: str) -> None:
+async def test_config_flow_success_builds_entry(mock_server: str, patched_session) -> None:
     """Valid OpenSubsonic creds must create an entry (the "add" happy path)."""
     from musicflow_cast.config_flow import MusicFlowCastConfigFlow
     from musicflow_cast.const import (
@@ -141,7 +161,7 @@ async def test_config_flow_success_builds_entry(mock_server: str) -> None:
         await close_hass(hass)
 
 
-async def test_config_flow_invalid_auth(mock_server: str, monkeypatch) -> None:
+async def test_config_flow_invalid_auth(mock_server: str, monkeypatch, patched_session) -> None:
     """Wrong password must surface 'invalid_auth', not crash the flow."""
     from musicflow_cast.config_flow import MusicFlowCastConfigFlow
     from musicflow_cast.const import (
@@ -175,7 +195,7 @@ async def test_config_flow_invalid_auth(mock_server: str, monkeypatch) -> None:
         await close_hass(hass)
 
 
-async def test_config_flow_cannot_connect(mock_server: str, monkeypatch) -> None:
+async def test_config_flow_cannot_connect(mock_server: str, monkeypatch, patched_session) -> None:
     """Unreachable server must surface 'cannot_connect'."""
     from musicflow_cast.config_flow import MusicFlowCastConfigFlow
     from musicflow_cast.const import (
@@ -209,7 +229,7 @@ async def test_config_flow_cannot_connect(mock_server: str, monkeypatch) -> None
         await close_hass(hass)
 
 
-async def test_config_flow_ssl_error(mock_server: str, monkeypatch) -> None:
+async def test_config_flow_ssl_error(mock_server: str, monkeypatch, patched_session) -> None:
     """SSL failure must surface 'ssl_error'."""
     from musicflow_cast.config_flow import MusicFlowCastConfigFlow
     from musicflow_cast.const import (
@@ -267,7 +287,7 @@ def _make_entry(url: str):
     )
 
 
-async def test_setup_success_and_browse(mock_server: str) -> None:
+async def test_setup_success_and_browse(mock_server: str, patched_session) -> None:
     """async_setup_entry must succeed and the media browser must return the root."""
     from musicflow_cast import async_setup_entry
     from musicflow_cast.browse_media import async_browse_media
@@ -288,7 +308,7 @@ async def test_setup_success_and_browse(mock_server: str) -> None:
         await close_hass(hass)
 
 
-async def test_setup_unreachable_is_retryable(mock_server: str, monkeypatch) -> None:
+async def test_setup_unreachable_is_retryable(mock_server: str, monkeypatch, patched_session) -> None:
     """An unreachable server must raise ConfigEntryNotReady (retry), not hard-crash."""
     from musicflow_cast import async_setup_entry
     from musicflow_cast.api import MusicFlowError
@@ -310,7 +330,7 @@ async def test_setup_unreachable_is_retryable(mock_server: str, monkeypatch) -> 
 # --------------------------------------------------------------------------
 # Play (cast) to a DLNA device
 # --------------------------------------------------------------------------
-async def test_play_album_to_device(mock_server: str) -> None:
+async def test_play_album_to_device(mock_server: str, patched_session) -> None:
     """Playing an album must resolve songs and cast via DLNA without error."""
     from musicflow_cast import async_setup_entry
     from musicflow_cast.dlna import DlnaDevice, DlnaDeviceInfo
