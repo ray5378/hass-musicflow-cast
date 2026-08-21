@@ -443,3 +443,57 @@ async def test_dlna_update_runs(mock_server: str) -> None:
     finally:
         await session.close()
         await close_hass(hass)
+
+
+# --------------------------------------------------------------------------
+# SSDP discovery: response / NOTIFY parsing
+# --------------------------------------------------------------------------
+def test_ssdp_protocol_parses_search_response_and_notify() -> None:
+    """The discovery protocol must extract LOCATION from both M-SEARCH responses
+    (HTTP 200) and unsolicited NOTIFY ssdp:alive broadcasts -- consumer devices
+    like the HiVi H5 MKII may only announce themselves via NOTIFY."""
+    from musicflow_cast.discovery import _SsdpProbeProtocol
+
+    p = _SsdpProbeProtocol()
+
+    # M-SEARCH 响应(HTTP 200 OK + LOCATION)
+    resp = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"CACHE-CONTROL: max-age=1800\r\n"
+        b"ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n"
+        b"USN: uuid:abc::urn:schemas-upnp-org:device:MediaRenderer:1\r\n"
+        b"LOCATION: http://192.168.1.10:49152/description.xml\r\n\r\n"
+    )
+    p.datagram_received(resp, ("192.168.1.10", 1900))
+
+    # NOTIFY ssdp:alive(设备主动广播,无 M-SEARCH 也会发)
+    notify = (
+        b"NOTIFY * HTTP/1.1\r\n"
+        b"HOST: 239.255.255.250:1900\r\n"
+        b"NT: urn:schemas-upnp-org:device:MediaRenderer:1\r\n"
+        b"NTS: ssdp:alive\r\n"
+        b"LOCATION: http://192.168.1.11:49153/desc.xml\r\n"
+        b"USN: uuid:def::urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
+    )
+    p.datagram_received(notify, ("192.168.1.11", 1900))
+
+    # 无关数据报应忽略
+    p.datagram_received(b"junk without location header", ("1.2.3.4", 1234))
+    p.datagram_received(b"", ("1.2.3.4", 1234))
+
+    assert p.locations == [
+        "http://192.168.1.10:49152/description.xml",
+        "http://192.168.1.11:49153/desc.xml",
+    ]
+    assert p.signal.is_set()
+
+    # 第二个包继续累积,不丢第一个
+    p.signal.clear()
+    resp2 = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"ST: ssdp:all\r\n"
+        b"LOCATION: http://192.168.1.12:49154/desc.xml\r\n\r\n"
+    )
+    p.datagram_received(resp2, ("192.168.1.12", 1900))
+    assert len(p.locations) == 3
+    assert p.locations[-1] == "http://192.168.1.12:49154/desc.xml"

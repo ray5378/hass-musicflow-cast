@@ -28,14 +28,24 @@ SSDP_GROUP = "239.255.255.250"
 SSDP_PORT = 1900
 SSDP_TARGET = (SSDP_GROUP, SSDP_PORT)
 SSDP_ST = "urn:schemas-upnp-org:device:MediaRenderer:1"
-M_SEARCH = (
-    "M-SEARCH * HTTP/1.1\r\n"
-    f"HOST: {SSDP_GROUP}:{SSDP_PORT}\r\n"
-    'MAN: "ssdp:discover"\r\n'
-    "MX: 3\r\n"
-    f"ST: {SSDP_ST}\r\n"
-    "\r\n"
-).encode("utf-8")
+SSDP_ST_ALL = "ssdp:all"
+
+
+def _m_search(st: str) -> bytes:
+    return (
+        "M-SEARCH * HTTP/1.1\r\n"
+        f"HOST: {SSDP_GROUP}:{SSDP_PORT}\r\n"
+        'MAN: "ssdp:discover"\r\n'
+        "MX: 3\r\n"
+        f"ST: {st}\r\n"
+        "\r\n"
+    ).encode("utf-8")
+
+
+# 两条 M-SEARCH:精确 ST + 通配 ssdp:all。部分消费级设备(如惠威 H5 MKII 这类
+# 音箱)只对 ssdp:all 响应,或响应 ST 与自己声明的不完全一致 —— 宽匹配兜底。
+M_SEARCH = _m_search(SSDP_ST)
+M_SEARCH_ALL = _m_search(SSDP_ST_ALL)
 
 # UPnP 命名空间
 _NS = {
@@ -170,7 +180,7 @@ class _SsdpProbeProtocol(asyncio.DatagramProtocol):
         _LOGGER.debug("SSDP 接收错误: %s", exc)
 
 
-async def discover_renderers(session: aiohttp.ClientSession, timeout: float = 4.0) -> list[DlnaDeviceInfo]:
+async def discover_renderers(session: aiohttp.ClientSession, timeout: float = 6.0) -> list[DlnaDeviceInfo]:
     """主动发一轮 M-SEARCH,收集局域网内 MediaRenderer。
 
     返回发现的设备列表(按 UDN 去重)。同一台设备可能回多个响应,调用方需去重。
@@ -193,16 +203,27 @@ async def discover_renderers(session: aiohttp.ClientSession, timeout: float = 4.
         )
         transport = sock[0]
 
-        # 多播 TTL:默认 TTL 在部分系统为 0,设备收不到 M-SEARCH
         raw = transport.get_extra_info("socket")
         if raw is not None:
             try:
+                # 多播 TTL:默认 TTL 在部分系统为 0,设备收不到 M-SEARCH
                 raw.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
             except OSError:
                 pass
+            try:
+                # 加入 SSDP 多播组:才能收到设备主动广播的 NOTIFY(ssdp:alive)。
+                # 很多消费级 DLNA 设备(音箱/电视)只在联网时广播 NOTIFY、对
+                # M-SEARCH 响应不可靠 —— 不加组就永远看不到它们。接口用 INADDR_ANY,
+                # 让系统选默认网卡;失败只降级(仍能收单播响应),不致命。
+                mreq = socket.inet_aton(SSDP_GROUP) + socket.inet_aton("0.0.0.0")
+                raw.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            except OSError as err:
+                _LOGGER.debug("加入 SSDP 多播组失败(仅影响 NOTIFY 监听): %s", err)
 
         try:
             transport.sendto(M_SEARCH, SSDP_TARGET)
+            # ssdp:all 兜底:部分设备只对通配 ST 响应
+            transport.sendto(M_SEARCH_ALL, SSDP_TARGET)
         except OSError as err:
             _LOGGER.warning("SSDP M-SEARCH 发送失败(网络受限?): %s", err)
             return []
