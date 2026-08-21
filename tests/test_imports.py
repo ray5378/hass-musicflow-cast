@@ -12,7 +12,6 @@ def test_import_integration_modules() -> None:
     """Every integration module must import cleanly against the real HA API."""
     import musicflow_cast  # noqa: F401
     from musicflow_cast import (  # noqa: F401
-        __init__ as init,
         api,
         browse_media,
         config_flow,
@@ -25,4 +24,4 @@ def test_import_integration_modules() -> None:
 
     assert musicflow_cast.DOMAIN == "musicflow_cast"
     # CONFIG_SCHEMA is built at import time via cv.config_entry_only_config_schema
-    assert init.CONFIG_SCHEMA is not None
+    assert musicflow_cast.CONFIG_SCHEMA is not None
