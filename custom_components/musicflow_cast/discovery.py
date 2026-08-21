@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any
@@ -141,6 +142,34 @@ def _join_url(base: str, relative: str) -> str:
     return urljoin(base, relative)
 
 
+class _SsdpProbeProtocol(asyncio.DatagramProtocol):
+    """收集 M-SEARCH 响应中的 LOCATION。
+
+    用 DatagramProtocol 回调接收 UDP,而不是 `transport.get_extra_info('socket')`
+    配合 `loop.sock_recv()` —— 后者在 Python 3.12+/HA 2026.2 里拿到的是
+    `TransportSocket`(无 recv),导致 AttributeError 被容错吞掉、永远发现不到设备。
+    """
+
+    def __init__(self) -> None:
+        self.locations: list[str] = []
+        self.signal = asyncio.Event()
+
+    def datagram_received(self, data: bytes, addr: Any) -> None:
+        text = data.decode("utf-8", "ignore")
+        if "location:" not in text.lower():
+            return
+        for line in text.splitlines():
+            if line.lower().startswith("location:"):
+                loc = line.split(":", 1)[1].strip()
+                if loc:
+                    self.locations.append(loc)
+                break
+        self.signal.set()
+
+    def error_received(self, exc: Exception) -> None:
+        _LOGGER.debug("SSDP 接收错误: %s", exc)
+
+
 async def discover_renderers(session: aiohttp.ClientSession, timeout: float = 4.0) -> list[DlnaDeviceInfo]:
     """主动发一轮 M-SEARCH,收集局域网内 MediaRenderer。
 
@@ -154,24 +183,21 @@ async def discover_renderers(session: aiohttp.ClientSession, timeout: float = 4.
 
     transport = None
     try:
-        # 用单个 UDP socket 既发 M-SEARCH 又收响应(绑定到通配地址 + 随机端口)。
-        # 多播/广播在容器、隔离网络下可能抛 OSError/PermissionError,必须容错。
+        # 单个 UDP socket 既发 M-SEARCH 又收响应;多播/广播在容器、隔离网络下可能
+        # 抛 OSError/PermissionError,必须容错。
+        protocol = _SsdpProbeProtocol()
         sock = await loop.create_datagram_endpoint(
-            asyncio.DatagramProtocol,
-            family=__import__("socket").AF_INET,
+            lambda: protocol,
+            family=socket.AF_INET,
             allow_broadcast=True,
         )
         transport = sock[0]
 
+        # 多播 TTL:默认 TTL 在部分系统为 0,设备收不到 M-SEARCH
         raw = transport.get_extra_info("socket")
         if raw is not None:
-            # 多播 TTL:默认 TTL 在部分系统为 0,设备收不到 M-SEARCH
             try:
-                raw.setsockopt(
-                    __import__("socket").IPPROTO_IP,
-                    __import__("socket").IP_MULTICAST_TTL,
-                    2,
-                )
+                raw.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
             except OSError:
                 pass
 
@@ -180,31 +206,20 @@ async def discover_renderers(session: aiohttp.ClientSession, timeout: float = 4.
         except OSError as err:
             _LOGGER.warning("SSDP M-SEARCH 发送失败(网络受限?): %s", err)
             return []
-        if raw is None:
-            return []
 
-        # 接收响应:轮询 socket 直到超时(同一设备可能回多个响应,去重在后面做)
-        end = loop.time() + timeout
-        while loop.time() < end:
+        # 等待响应直到超时(同一设备可能回多个响应,location 去重放在后面)
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
             try:
-                data, _addr = await asyncio.wait_for(
-                    loop.sock_recv(raw, 4096),
-                    timeout=max(0.1, end - loop.time()),
+                await asyncio.wait_for(
+                    protocol.signal.wait(), timeout=max(0.05, deadline - loop.time())
                 )
+                protocol.signal.clear()
             except asyncio.TimeoutError:
                 break
-            except OSError:
+            except Exception:  # noqa: BLE001
                 break
-            text = data.decode("utf-8", "ignore")
-            if "LOCATION:" not in text and "location:" not in text:
-                continue
-            for line in text.splitlines():
-                low = line.lower()
-                if low.startswith("location:"):
-                    location = line.split(":", 1)[1].strip()
-                    if location and location not in locations_seen:
-                        locations_seen.add(location)
-                    break
+        locations_seen.update(protocol.locations)
     except Exception as err:  # noqa: BLE001
         # create_datagram_endpoint 等失败:无 SO_BROADCAST 权限 / 容器网络限制
         _LOGGER.warning("SSDP 发现 socket 创建失败(网络/容器限制?): %s", err)

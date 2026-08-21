@@ -406,7 +406,10 @@ async def test_device_discovery_creates_entity(mock_server: str, patched_session
         assert len(added) == 1, f"expected 1 entity to be added, got {len(added)}: {added}"
         entity = added[0]
         assert entity.unique_id == "uuid:test"
-        assert entity.name == "TestRenderer"
+        # has_entity_name=True: bare entity .name resolves via the HA entity registry,
+        # so assert on device info instead (in real HA the entity shows the device name)
+        assert entity.device_info is not None
+        assert entity.device_info["name"] == "TestRenderer"
 
         # a second reconcile must NOT duplicate the entity
         coordinator._notify()
