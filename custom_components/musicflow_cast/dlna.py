@@ -133,6 +133,9 @@ class DlnaDeviceState:
     position: float = 0.0       # 秒
     volume: int = 50            # 0-100
     muted: bool = False
+    # 连续状态轮询失败次数:消费级设备(如惠威 H5 MKII)状态端点弱,偶发失败
+    # 不应立刻把实体标为不可用 —— 连续失败达阈值才降级(见 async_update)。
+    poll_failures: int = 0
 
 
 @dataclass
@@ -253,14 +256,22 @@ class DlnaDevice:
 
     # ---- 状态轮询 ----
     async def async_update(self, session: aiohttp.ClientSession) -> None:
-        """拉取最新状态并写回 self.state。"""
+        """拉取最新状态并写回 self.state。
+
+        可用性语义:单次 GetTransportInfo 失败只是"这轮没查到",不代表设备离线
+        (消费级 DLNA 音箱的状态端点经常不稳定)。连续失败达到阈值才标不可用,
+        且成功后立即恢复 —— 设备是否离线由 SSDP 发现/保活(coordinator)决定。
+        """
         transport = await self._soap(
             session, self.info.av_transport_url, AV_TRANSPORT, "GetTransportInfo",
             {"InstanceID": "0"},
         )
         if transport is None:
-            self.state.available = False
+            self.state.poll_failures += 1
+            if self.state.poll_failures >= 3:
+                self.state.available = False
             return
+        self.state.poll_failures = 0
         self.state.available = True
         self.state.transport_state = transport.get("CurrentTransportState", "STOPPED").upper()
 

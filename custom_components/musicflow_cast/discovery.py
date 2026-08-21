@@ -152,6 +152,30 @@ def _join_url(base: str, relative: str) -> str:
     return urljoin(base, relative)
 
 
+def parse_ssdp_notify(text: str) -> dict[str, str] | None:
+    """解析一条 SSDP NOTIFY(ssdp:alive / ssdp:byebye)。
+
+    返回 {nts, udn, location};非 NOTIFY 或无关 NTS 返回 None。
+    USN 形如 'uuid:<udn>::urn:...' → udn 取 '::' 之前部分。
+    """
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith("NOTIFY"):
+        return None
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        if ":" in line:
+            key, _, value = line.partition(":")
+            headers[key.strip().lower()] = value.strip()
+    nts = headers.get("nts", "")
+    if nts not in ("ssdp:alive", "ssdp:byebye"):
+        return None
+    usn = headers.get("usn", "")
+    udn = usn.split("::", 1)[0] if "::" in usn else usn
+    if not udn:
+        return None
+    return {"nts": nts, "udn": udn, "location": headers.get("location", "")}
+
+
 class _SsdpProbeProtocol(asyncio.DatagramProtocol):
     """收集 M-SEARCH 响应中的 LOCATION。
 

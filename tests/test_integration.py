@@ -497,3 +497,111 @@ def test_ssdp_protocol_parses_search_response_and_notify() -> None:
     p.datagram_received(resp2, ("192.168.1.12", 1900))
     assert len(p.locations) == 3
     assert p.locations[-1] == "http://192.168.1.12:49154/desc.xml"
+
+
+def test_parse_ssdp_notify() -> None:
+    """parse_ssdp_notify must extract nts/udn/location from alive+byebye and reject junk."""
+    from musicflow_cast.discovery import parse_ssdp_notify
+
+    alive = (
+        "NOTIFY * HTTP/1.1\r\n"
+        "HOST: 239.255.255.250:1900\r\n"
+        "NT: urn:schemas-upnp-org:device:MediaRenderer:1\r\n"
+        "NTS: ssdp:alive\r\n"
+        "LOCATION: http://192.168.1.10:49152/desc.xml\r\n"
+        "USN: uuid:abc::urn:schemas-upnp-org:device:MediaRenderer:1\r\n\r\n"
+    )
+    assert parse_ssdp_notify(alive) == {
+        "nts": "ssdp:alive",
+        "udn": "uuid:abc",
+        "location": "http://192.168.1.10:49152/desc.xml",
+    }
+
+    byebye = alive.replace("NTS: ssdp:alive", "NTS: ssdp:byebye")
+    parsed = parse_ssdp_notify(byebye)
+    assert parsed is not None and parsed["nts"] == "ssdp:byebye"
+
+    # M-SEARCH response / unrelated packets must be ignored
+    assert parse_ssdp_notify("HTTP/1.1 200 OK\r\nLOCATION: x\r\n\r\n") is None
+    assert parse_ssdp_notify("NOTIFY * HTTP/1.1\r\nNTS: ssdp:update\r\nUSN: uuid:x\r\n\r\n") is None
+    assert parse_ssdp_notify("NOTIFY * HTTP/1.1\r\nNTS: ssdp:alive\r\n\r\n") is None  # no udn
+    assert parse_ssdp_notify("garbage") is None
+
+
+def _dead_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+async def test_dlna_available_needs_three_failed_polls(mock_server: str) -> None:
+    """Availability must not flip on a single failed poll -- consumer DLNA devices
+    (HiVi H5 MKII) have flaky status endpoints. 3 consecutive failures -> unavailable,
+    then a successful poll restores it immediately."""
+    from musicflow_cast.dlna import DlnaDevice, DlnaDeviceInfo
+
+    info = DlnaDeviceInfo(
+        udn="uuid:t",
+        name="T",
+        location=mock_server,
+        av_transport_url=f"http://127.0.0.1:{_dead_port()}/control",
+        rendering_control_url=mock_server,
+    )
+    dev = DlnaDevice(info=info)
+    async with aiohttp.ClientSession() as session:
+        for i in range(2):
+            await dev.async_update(session)
+            assert dev.state.available is True, f"poll {i+1} must not mark unavailable yet"
+        await dev.async_update(session)
+        assert dev.state.available is False, "3rd consecutive failure should mark unavailable"
+        assert dev.state.poll_failures == 3
+
+        # recovery: point at the working mock and poll once
+        info.av_transport_url = f"{mock_server}/control"
+        await dev.async_update(session)
+        assert dev.state.available is True, "successful poll must restore availability"
+        assert dev.state.poll_failures == 0
+
+
+async def test_notify_alive_keeps_device_byebye_removes(mock_server: str, patched_session) -> None:
+    """Coordinator: ssdp:alive refreshes missing_count+availability; ssdp:byebye
+    removes the device and notifies (this is what keeps the entity from being dropped
+    for devices that only announce via NOTIFY)."""
+    from musicflow_cast import async_setup_entry
+    from musicflow_cast.dlna import DlnaDevice, DlnaDeviceInfo
+
+    hass = FakeHass()
+    try:
+        entry = _make_entry(mock_server)
+        await async_setup_entry(hass, entry)  # type: ignore[arg-type]
+        coordinator = entry.runtime_data
+
+        info = DlnaDeviceInfo(
+            udn="uuid:hivi",
+            name="H5MKII",
+            location=mock_server,
+            av_transport_url=f"{mock_server}/control",
+            rendering_control_url=f"{mock_server}/control",
+        )
+        dev = DlnaDevice(info=info)
+        dev.missing_count = 5
+        dev.state.available = False
+        coordinator.devices["uuid:hivi"] = dev
+
+        # alive -> keepalive + restore availability
+        coordinator._on_notify({"nts": "ssdp:alive", "udn": "uuid:hivi", "location": mock_server})
+        assert dev.missing_count == 0
+        assert dev.state.available is True
+
+        # byebye -> remove + notify
+        removed: list[bool] = []
+        coordinator.async_on_devices_changed(lambda: removed.append(True))
+        coordinator._on_notify({"nts": "ssdp:byebye", "udn": "uuid:hivi", "location": ""})
+        assert "uuid:hivi" not in coordinator.devices
+        assert removed == [True]
+    finally:
+        if entry.runtime_data is not None:
+            await entry.runtime_data.async_shutdown()
+        await close_hass(hass)
